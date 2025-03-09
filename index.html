@@ -22,11 +22,11 @@
         <h1>GymPose - Pose Detection</h1>
         
         <div class="app-mode-selector">
-            <button id="cameraModeBtn" class="mode-btn active">Camera Mode</button>
-            <button id="analysisModeBtn" class="mode-btn">Analysis Mode</button>
-            <button id="frameModeBtn" class="mode-btn">Frame Selection Mode</button>
-            <button id="selectedPoseModeBtn" class="mode-btn">Selected Pose</button>
-            <button id="poseComparisonModeBtn" class="mode-btn">Pose Comparison</button>
+            <button id="cameraModeBtn" class="mode-btn active">1. Record Video</button>
+            <button id="analysisModeBtn" class="mode-btn">2. Analysed Video</button>
+            <button id="frameModeBtn" class="mode-btn">3. Select Frame</button>
+            <button id="selectedPoseModeBtn" class="mode-btn">4. Selected Pose</button>
+            <button id="poseComparisonModeBtn" class="mode-btn">5. Pose Comparison</button>
         </div>
         
         <!-- Camera Mode - For recording video -->
@@ -42,6 +42,9 @@
                         <button id="stopBtn" class="btn" disabled>Stop Recording</button>
                         <button id="analyzeBtn" class="btn" disabled>Analyze Pose</button>
                     </div>
+                </div>
+                <div class="app-info">
+                    <p>Check out this demo of one of the features coming to the PoseLab mobile app, currently in development. For more info, follow me on X: <a href="https://twitter.com/mp_coder" target="_blank">@mp_coder</a>.</p>
                 </div>
             </div>
         </div>
@@ -60,7 +63,7 @@
         <!-- Frame Selection Mode - For selecting specific frames -->
         <div id="frameMode" class="app-mode" style="display: none;">
             <div class="frame-viewer">
-                <h2>Frame Selection</h2>
+                <h2>Select the frame with the chosen pose</h2>
                 <div class="frame-slider">
                     <input type="range" id="frameSlider" min="0" max="0" value="0" step="1" class="slider">
                     <div class="slider-labels">

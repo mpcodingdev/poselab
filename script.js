@@ -80,6 +80,19 @@ const KEYPOINT_CONNECTIONS = [
     ['left_knee', 'left_ankle'], ['right_knee', 'right_ankle']
 ];
 
+// Add these variables at the top of the script file, with other global variables
+let previousAdvice = [];
+let adviceStabilityCounter = 0;
+const ADVICE_STABILITY_THRESHOLD = 10; // Number of frames before advice can change
+
+// Add variables for similarity smoothing
+let previousSimilarityScores = [];
+const SIMILARITY_SMOOTHING_WINDOW = 5; // Number of frames to average for smoothing
+
+// Add this variable with the other global variables
+let displayedSimilarityScore = 0;
+const DISPLAY_SMOOTHING_FACTOR = 0.2; // Lower = smoother transitions (0.1 to 0.3 is good)
+
 // Set up event listeners
 document.addEventListener('DOMContentLoaded', async function() {
     console.log('DOM loaded, initializing app...');
@@ -484,18 +497,23 @@ function updatePoseInfo(pose) {
     // Clear previous info
     poseInfoDiv.innerHTML = '';
     
-    // Display confidence score
-    const scoreElement = document.createElement('div');
-    scoreElement.classList.add('keypoint');
-    scoreElement.textContent = `Overall confidence: ${(pose.score * 100).toFixed(1)}%`;
-    poseInfoDiv.appendChild(scoreElement);
+    // Add a header for the keypoints
+    const headerElement = document.createElement('div');
+    headerElement.classList.add('keypoint-header');
+    headerElement.textContent = 'Detected Keypoints:';
+    poseInfoDiv.appendChild(headerElement);
     
-    // Display keypoint positions with confidence > 50% (only for keypoints we're interested in)
+    // Display keypoint positions (only for keypoints we're interested in)
     for (const keypoint of pose.keypoints) {
         if (keypoint.score > 0.5 && keyPointsToDisplay.includes(keypoint.name)) {
             const keypointElement = document.createElement('div');
             keypointElement.classList.add('keypoint');
-            keypointElement.textContent = `${keypoint.name}: (${Math.round(keypoint.x)}, ${Math.round(keypoint.y)}) - ${(keypoint.score * 100).toFixed(1)}%`;
+            
+            // Format the keypoint name for better readability
+            const readableName = keypoint.name.replace(/_/g, ' ');
+            
+            // Display only the name and position, no confidence
+            keypointElement.textContent = `${readableName}: (${Math.round(keypoint.x)}, ${Math.round(keypoint.y)})`;
             poseInfoDiv.appendChild(keypointElement);
         }
     }
@@ -1939,18 +1957,23 @@ function updateSelectedPoseInfo(pose) {
     // Clear previous info
     selectedPoseInfo.innerHTML = '';
     
-    // Display confidence score
-    const scoreElement = document.createElement('div');
-    scoreElement.classList.add('keypoint');
-    scoreElement.textContent = `Overall confidence: ${(pose.score * 100).toFixed(1)}%`;
-    selectedPoseInfo.appendChild(scoreElement);
+    // Add a header for the keypoints
+    const headerElement = document.createElement('div');
+    headerElement.classList.add('keypoint-header');
+    headerElement.textContent = 'Reference Pose Keypoints:';
+    selectedPoseInfo.appendChild(headerElement);
     
-    // Display keypoint positions with confidence > 50% (only for keypoints we're interested in)
+    // Display keypoint positions (only for keypoints we're interested in)
     for (const keypoint of pose.keypoints) {
         if (keypoint.score > 0.5 && keyPointsToDisplay.includes(keypoint.name)) {
             const keypointElement = document.createElement('div');
             keypointElement.classList.add('keypoint');
-            keypointElement.textContent = `${keypoint.name}: (${Math.round(keypoint.x)}, ${Math.round(keypoint.y)}) - ${(keypoint.score * 100).toFixed(1)}%`;
+            
+            // Format the keypoint name for better readability
+            const readableName = keypoint.name.replace(/_/g, ' ');
+            
+            // Display only the name and position, no confidence
+            keypointElement.textContent = `${readableName}: (${Math.round(keypoint.x)}, ${Math.round(keypoint.y)})`;
             selectedPoseInfo.appendChild(keypointElement);
         }
     }
@@ -2135,25 +2158,25 @@ async function startComparisonPoseDetection() {
                 // Compare with reference pose
                 const similarity = comparePoses(selectedPose.pose, poses[0]);
                 
-                // Calculate color based on similarity score - even more lenient thresholds
+                // Calculate color based on similarity score with more accurate thresholds
                 let r, g, b;
                 const similarityValue = similarity.overall / 100;
                 
-                if (similarityValue < 0.3) { // Changed from 0.35 to 0.3
-                    // Red (0%) to Yellow (30%)
+                if (similarityValue < 0.6) {
+                    // Red (0%) to Yellow (60%)
                     r = 255;
-                    g = Math.round(255 * (similarityValue * 3.33)); // Adjusted multiplier
+                    g = Math.round(255 * (similarityValue * 1.67)); // Scale to reach yellow at 60%
                     b = 0;
                 } else {
-                    // Yellow (30%) to Green (100%)
-                    r = Math.round(255 * (1 - (similarityValue - 0.3) * (1/0.7))); // Adjusted calculation
+                    // Yellow (60%) to Green (100%)
+                    r = Math.round(255 * (1 - (similarityValue - 0.6) * 2.5)); // Scale to reach green at 100%
                     g = 255;
                     b = 0;
                 }
                 
                 // Ensure we have some color even for very low similarity
-                if (r < 140) r = 140; // Increased from 120 to 140
-                if (g < 100) g = 100;   // Increased from 80 to 100
+                if (r < 100) r = 100;
+                if (g < 80) g = 80;
                 
                 const poseColor = {
                     keypoints: `rgb(${r}, ${g}, ${b})`,
@@ -2213,14 +2236,17 @@ function comparePoses(referencePose, currentPose) {
         }
     });
     
-    // Calculate center points for both poses
+    // Calculate center points for both poses using only high-confidence keypoints
     let refCenterX = 0, refCenterY = 0, refCount = 0;
     let currCenterX = 0, currCenterY = 0, currCount = 0;
+    
+    // Use a higher confidence threshold for center calculation
+    const centerConfidenceThreshold = 0.3;
     
     // Calculate reference pose center
     for (const name of keyPointsToCompare) {
         const refKp = referenceKeypoints[name];
-        if (refKp && refKp.score > 0.15) { // Further reduced confidence threshold from 0.2 to 0.15
+        if (refKp && refKp.score > centerConfidenceThreshold) {
             refCenterX += refKp.x;
             refCenterY += refKp.y;
             refCount++;
@@ -2230,7 +2256,7 @@ function comparePoses(referencePose, currentPose) {
     // Calculate current pose center
     for (const name of keyPointsToCompare) {
         const currKp = currentKeypoints[name];
-        if (currKp && currKp.score > 0.15) { // Further reduced confidence threshold from 0.2 to 0.15
+        if (currKp && currKp.score > centerConfidenceThreshold) {
             currCenterX += currKp.x;
             currCenterY += currKp.y;
             currCount++;
@@ -2253,38 +2279,87 @@ function comparePoses(referencePose, currentPose) {
     let totalSimilarity = 0;
     let validKeypoints = 0;
     
-    // Calculate scale factor based on torso size (distance between shoulders and hips)
-    let refScale = 1, currScale = 1;
+    // Calculate scale factor based on multiple body measurements for more robust scaling
+    let refScale = 0, currScale = 0;
+    let scaleCount = 0;
     
-    // Try to use shoulder-to-hip distance for scaling
-    if (referenceKeypoints['left_shoulder'] && referenceKeypoints['left_hip'] &&
-        referenceKeypoints['left_shoulder'].score > 0.15 && referenceKeypoints['left_hip'].score > 0.15) {
-        refScale = Math.sqrt(
-            Math.pow(referenceKeypoints['left_shoulder'].x - referenceKeypoints['left_hip'].x, 2) +
-            Math.pow(referenceKeypoints['left_shoulder'].y - referenceKeypoints['left_hip'].y, 2)
-        );
+    // Define key segments for scaling
+    const scaleSegments = [
+        // Torso height (shoulder to hip)
+        { start: 'left_shoulder', end: 'left_hip' },
+        { start: 'right_shoulder', end: 'right_hip' },
+        // Shoulder width
+        { start: 'left_shoulder', end: 'right_shoulder' },
+        // Hip width
+        { start: 'left_hip', end: 'right_hip' },
+    ];
+    
+    // Calculate reference scale using multiple segments
+    for (const segment of scaleSegments) {
+        const startKp = referenceKeypoints[segment.start];
+        const endKp = referenceKeypoints[segment.end];
+        
+        if (startKp && endKp && startKp.score > 0.3 && endKp.score > 0.3) {
+            const distance = Math.sqrt(
+                Math.pow(startKp.x - endKp.x, 2) +
+                Math.pow(startKp.y - endKp.y, 2)
+            );
+            refScale += distance;
+            scaleCount++;
+        }
     }
     
-    if (currentKeypoints['left_shoulder'] && currentKeypoints['left_hip'] &&
-        currentKeypoints['left_shoulder'].score > 0.15 && currentKeypoints['left_hip'].score > 0.15) {
-        currScale = Math.sqrt(
-            Math.pow(currentKeypoints['left_shoulder'].x - currentKeypoints['left_hip'].x, 2) +
-            Math.pow(currentKeypoints['left_shoulder'].y - currentKeypoints['left_hip'].y, 2)
-        );
+    // Calculate current scale using multiple segments
+    let currScaleCount = 0;
+    for (const segment of scaleSegments) {
+        const startKp = currentKeypoints[segment.start];
+        const endKp = currentKeypoints[segment.end];
+        
+        if (startKp && endKp && startKp.score > 0.3 && endKp.score > 0.3) {
+            const distance = Math.sqrt(
+                Math.pow(startKp.x - endKp.x, 2) +
+                Math.pow(startKp.y - endKp.y, 2)
+            );
+            currScale += distance;
+            currScaleCount++;
+        }
+    }
+    
+    // Average the scales
+    if (scaleCount > 0) {
+        refScale /= scaleCount;
+    } else {
+        // Fallback if no segments were valid
+        refScale = 100; // Default scale
+    }
+    
+    if (currScaleCount > 0) {
+        currScale /= currScaleCount;
+    } else {
+        // Fallback if no segments were valid
+        currScale = 100; // Default scale
     }
     
     // Prevent division by zero
-    refScale = refScale || 1;
-    currScale = currScale || 1;
+    refScale = Math.max(refScale, 1);
+    currScale = Math.max(currScale, 1);
     
     // Calculate the scale ratio to normalize distances
     const scaleRatio = refScale / currScale;
     
+    // Confidence threshold for keypoint comparison
+    const keypointConfidenceThreshold = 0.2;
+    
+    // Calculate joint angles for both poses
+    const referenceAngles = calculateJointAngles(referenceKeypoints);
+    const currentAngles = calculateJointAngles(currentKeypoints);
+    
+    // Compare keypoints
     keyPointsToCompare.forEach(name => {
         const refKp = referenceKeypoints[name];
         const currKp = currentKeypoints[name];
         
-        if (refKp && currKp && refKp.score > 0.15 && currKp.score > 0.15) { // Further reduced confidence threshold from 0.2 to 0.15
+        if (refKp && currKp && refKp.score > keypointConfidenceThreshold && currKp.score > keypointConfidenceThreshold) {
             // Calculate normalized positions (relative to center and scaled)
             const refNormX = (refKp.x - refCenterX) / refScale;
             const refNormY = (refKp.y - refCenterY) / refScale;
@@ -2299,20 +2374,40 @@ function comparePoses(referencePose, currentPose) {
             );
             
             // Convert distance to similarity (0-100%)
-            // Even more lenient conversion: a distance of 2.0 or more is considered poor (was 1.5)
-            const rawSimilarity = Math.max(0, 100 - (distance * 25)); // Further reduced multiplier from 35 to 25
+            // A distance of 0 is 100% similar, a distance of 0.5 or more is 0% similar
+            const positionSimilarity = Math.max(0, 100 - (distance * 200));
             
-            // Apply a stronger curve to boost low and medium similarity scores
-            // This formula significantly boosts scores in the lower and middle ranges
-            const boostedSimilarity = Math.min(100, rawSimilarity + (50 * Math.sin(Math.PI * rawSimilarity / 100)));
+            // Get angle similarity if available
+            let angleSimilarity = 100;
+            if (referenceAngles[name] !== undefined && currentAngles[name] !== undefined) {
+                const angleDiff = Math.abs(referenceAngles[name] - currentAngles[name]);
+                // Convert angle difference to similarity (0-100%)
+                // A difference of 0 degrees is 100% similar, a difference of 45 degrees or more is 0% similar
+                angleSimilarity = Math.max(0, 100 - (angleDiff * 100 / 45));
+            }
+            
+            // Combine position and angle similarity
+            // Weight position more heavily for extremities, weight angle more heavily for joints
+            let weightPosition = 0.5;
+            if (name.includes('wrist') || name.includes('ankle')) {
+                weightPosition = 0.7; // Extremities - position matters more
+            } else if (name.includes('elbow') || name.includes('knee')) {
+                weightPosition = 0.3; // Joints - angle matters more
+            }
+            
+            const combinedSimilarity = (positionSimilarity * weightPosition) + (angleSimilarity * (1 - weightPosition));
+            
+            // Apply confidence weighting
+            const confidenceWeight = (refKp.score + currKp.score) / 2;
+            const weightedSimilarity = combinedSimilarity * Math.pow(confidenceWeight, 0.5);
             
             keypointSimilarities.push({
                 name: name,
-                similarity: boostedSimilarity,
-                confidence: (refKp.score + currKp.score) / 2
+                similarity: weightedSimilarity,
+                confidence: confidenceWeight
             });
             
-            totalSimilarity += boostedSimilarity;
+            totalSimilarity += weightedSimilarity;
             validKeypoints++;
         }
     });
@@ -2320,70 +2415,433 @@ function comparePoses(referencePose, currentPose) {
     // Calculate overall similarity
     let overallSimilarity = validKeypoints > 0 ? totalSimilarity / validKeypoints : 0;
     
-    // Apply a stronger final boost to the overall similarity
-    // This gives a minimum score of 40% (was 30%) even for very different poses
-    overallSimilarity = Math.min(100, 40 + (overallSimilarity * 0.6));
+    // Calculate keypoint presence ratio
+    const keyPointPresenceRatio = validKeypoints / keyPointsToCompare.length;
     
-    return {
+    // Apply a bonus for having more keypoints detected
+    // This rewards poses where all keypoints are present and penalizes missing keypoints
+    const presenceBonus = Math.pow(keyPointPresenceRatio, 2) * 15; // Up to 15% bonus for full keypoint detection
+    
+    // Apply the presence bonus to the overall similarity
+    overallSimilarity = Math.min(100, overallSimilarity + presenceBonus);
+    
+    // Apply a curve to push high similarities closer to 100% and low similarities below 50%
+    if (overallSimilarity >= 60) {
+        // For scores above 60%, apply a curve that pushes them closer to 100%
+        // The higher the original score, the more it gets boosted
+        const boostFactor = (overallSimilarity - 60) / 40; // 0 at 60%, 1 at 100%
+        const boost = (100 - overallSimilarity) * boostFactor * 0.7; // Up to 70% of the remaining distance to 100
+        overallSimilarity = Math.min(100, overallSimilarity + boost);
+    } else if (overallSimilarity < 50) {
+        // For scores below 50%, apply a curve that pushes them lower
+        // The lower the original score, the more it gets reduced
+        const reductionFactor = (50 - overallSimilarity) / 50; // 0 at 50%, 1 at 0%
+        const reduction = overallSimilarity * reductionFactor * 0.4; // Up to 40% reduction
+        overallSimilarity = Math.max(0, overallSimilarity - reduction);
+    }
+    
+    // Apply a more realistic curve to the overall similarity
+    // This gives a more accurate representation of how similar the poses actually are
+    overallSimilarity = Math.max(0, Math.min(100, overallSimilarity));
+    
+    // Create the similarity result object
+    const similarityResult = {
         overall: overallSimilarity,
-        keypoints: keypointSimilarities
+        keypoints: keypointSimilarities,
+        keyPointPresenceRatio: keyPointPresenceRatio
     };
+    
+    // Apply temporal smoothing to reduce fluctuations
+    return smoothSimilarityScore(similarityResult);
+}
+
+// Function to smooth similarity scores over time
+function smoothSimilarityScore(currentSimilarity) {
+    // Add current score to history
+    previousSimilarityScores.push({
+        overall: currentSimilarity.overall,
+        keypoints: currentSimilarity.keypoints.map(kp => ({...kp})),
+        keyPointPresenceRatio: currentSimilarity.keyPointPresenceRatio
+    });
+    
+    // Keep only the most recent scores within the smoothing window
+    if (previousSimilarityScores.length > SIMILARITY_SMOOTHING_WINDOW) {
+        previousSimilarityScores.shift();
+    }
+    
+    // If we don't have enough history yet, return the current score
+    if (previousSimilarityScores.length < 2) {
+        return currentSimilarity;
+    }
+    
+    // Calculate smoothed overall score with exponential weighting
+    // More recent scores have higher weight
+    let totalWeight = 0;
+    let weightedOverallSum = 0;
+    let weightedPresenceRatioSum = 0;
+    
+    for (let i = 0; i < previousSimilarityScores.length; i++) {
+        // Exponential weight: newer scores have more influence
+        const weight = Math.pow(1.5, i);
+        totalWeight += weight;
+        weightedOverallSum += previousSimilarityScores[i].overall * weight;
+        weightedPresenceRatioSum += previousSimilarityScores[i].keyPointPresenceRatio * weight;
+    }
+    
+    const smoothedOverall = weightedOverallSum / totalWeight;
+    const smoothedPresenceRatio = weightedPresenceRatioSum / totalWeight;
+    
+    // Create a map of all keypoints across history
+    const keypointMap = new Map();
+    
+    // Collect all keypoints from history
+    previousSimilarityScores.forEach((score, scoreIndex) => {
+        score.keypoints.forEach(kp => {
+            if (!keypointMap.has(kp.name)) {
+                keypointMap.set(kp.name, []);
+            }
+            
+            // Add with weight based on recency
+            const weight = Math.pow(1.5, scoreIndex);
+            keypointMap.get(kp.name).push({
+                similarity: kp.similarity,
+                confidence: kp.confidence,
+                weight: weight
+            });
+        });
+    });
+    
+    // Calculate smoothed keypoint similarities
+    const smoothedKeypoints = [];
+    
+    keypointMap.forEach((values, name) => {
+        let totalWeight = 0;
+        let weightedSimilaritySum = 0;
+        let weightedConfidenceSum = 0;
+        
+        values.forEach(value => {
+            totalWeight += value.weight;
+            weightedSimilaritySum += value.similarity * value.weight;
+            weightedConfidenceSum += value.confidence * value.weight;
+        });
+        
+        smoothedKeypoints.push({
+            name: name,
+            similarity: weightedSimilaritySum / totalWeight,
+            confidence: weightedConfidenceSum / totalWeight
+        });
+    });
+    
+    // Return smoothed similarity
+    return {
+        overall: smoothedOverall,
+        keypoints: smoothedKeypoints,
+        keyPointPresenceRatio: smoothedPresenceRatio
+    };
+}
+
+// Helper function to calculate joint angles
+function calculateJointAngles(keypoints) {
+    const angles = {};
+    
+    // Calculate elbow angles
+    if (keypoints['left_shoulder'] && keypoints['left_elbow'] && keypoints['left_wrist'] &&
+        keypoints['left_shoulder'].score > 0.2 && keypoints['left_elbow'].score > 0.2 && keypoints['left_wrist'].score > 0.2) {
+        angles['left_elbow'] = calculateAngle(
+            keypoints['left_shoulder'], 
+            keypoints['left_elbow'], 
+            keypoints['left_wrist']
+        );
+    }
+    
+    if (keypoints['right_shoulder'] && keypoints['right_elbow'] && keypoints['right_wrist'] &&
+        keypoints['right_shoulder'].score > 0.2 && keypoints['right_elbow'].score > 0.2 && keypoints['right_wrist'].score > 0.2) {
+        angles['right_elbow'] = calculateAngle(
+            keypoints['right_shoulder'], 
+            keypoints['right_elbow'], 
+            keypoints['right_wrist']
+        );
+    }
+    
+    // Calculate knee angles
+    if (keypoints['left_hip'] && keypoints['left_knee'] && keypoints['left_ankle'] &&
+        keypoints['left_hip'].score > 0.2 && keypoints['left_knee'].score > 0.2 && keypoints['left_ankle'].score > 0.2) {
+        angles['left_knee'] = calculateAngle(
+            keypoints['left_hip'], 
+            keypoints['left_knee'], 
+            keypoints['left_ankle']
+        );
+    }
+    
+    if (keypoints['right_hip'] && keypoints['right_knee'] && keypoints['right_ankle'] &&
+        keypoints['right_hip'].score > 0.2 && keypoints['right_knee'].score > 0.2 && keypoints['right_ankle'].score > 0.2) {
+        angles['right_knee'] = calculateAngle(
+            keypoints['right_hip'], 
+            keypoints['right_knee'], 
+            keypoints['right_ankle']
+        );
+    }
+    
+    // Calculate shoulder angles
+    if (keypoints['right_shoulder'] && keypoints['left_shoulder'] && keypoints['right_elbow'] &&
+        keypoints['right_shoulder'].score > 0.2 && keypoints['left_shoulder'].score > 0.2 && keypoints['right_elbow'].score > 0.2) {
+        angles['right_shoulder'] = calculateAngle(
+            keypoints['left_shoulder'], 
+            keypoints['right_shoulder'], 
+            keypoints['right_elbow']
+        );
+    }
+    
+    if (keypoints['left_shoulder'] && keypoints['right_shoulder'] && keypoints['left_elbow'] &&
+        keypoints['left_shoulder'].score > 0.2 && keypoints['right_shoulder'].score > 0.2 && keypoints['left_elbow'].score > 0.2) {
+        angles['left_shoulder'] = calculateAngle(
+            keypoints['right_shoulder'], 
+            keypoints['left_shoulder'], 
+            keypoints['left_elbow']
+        );
+    }
+    
+    // Calculate hip angles
+    if (keypoints['left_shoulder'] && keypoints['left_hip'] && keypoints['left_knee'] &&
+        keypoints['left_shoulder'].score > 0.2 && keypoints['left_hip'].score > 0.2 && keypoints['left_knee'].score > 0.2) {
+        angles['left_hip'] = calculateAngle(
+            keypoints['left_shoulder'], 
+            keypoints['left_hip'], 
+            keypoints['left_knee']
+        );
+    }
+    
+    if (keypoints['right_shoulder'] && keypoints['right_hip'] && keypoints['right_knee'] &&
+        keypoints['right_shoulder'].score > 0.2 && keypoints['right_hip'].score > 0.2 && keypoints['right_knee'].score > 0.2) {
+        angles['right_hip'] = calculateAngle(
+            keypoints['right_shoulder'], 
+            keypoints['right_hip'], 
+            keypoints['right_knee']
+        );
+    }
+    
+    return angles;
+}
+
+// Helper function to calculate angle between three points
+function calculateAngle(pointA, pointB, pointC) {
+    // Calculate vectors
+    const vectorAB = {
+        x: pointB.x - pointA.x,
+        y: pointB.y - pointA.y
+    };
+    
+    const vectorBC = {
+        x: pointC.x - pointB.x,
+        y: pointC.y - pointB.y
+    };
+    
+    // Calculate dot product
+    const dotProduct = (vectorAB.x * vectorBC.x) + (vectorAB.y * vectorBC.y);
+    
+    // Calculate magnitudes
+    const magnitudeAB = Math.sqrt(vectorAB.x * vectorAB.x + vectorAB.y * vectorAB.y);
+    const magnitudeBC = Math.sqrt(vectorBC.x * vectorBC.x + vectorBC.y * vectorBC.y);
+    
+    // Calculate angle in radians
+    const cosAngle = dotProduct / (magnitudeAB * magnitudeBC);
+    
+    // Convert to degrees and ensure value is within valid range
+    const angleRadians = Math.acos(Math.max(-1, Math.min(1, cosAngle)));
+    const angleDegrees = angleRadians * (180 / Math.PI);
+    
+    return angleDegrees;
 }
 
 // Update the comparison display with similarity results
 function updateComparisonDisplay(similarity, currentPose) {
-    // Update overall score
-    matchScore.textContent = `${Math.round(similarity.overall)}%`;
+    // Smooth the displayed score with exponential moving average
+    if (displayedSimilarityScore === 0) {
+        // First time, just use the current score
+        displayedSimilarityScore = similarity.overall;
+    } else {
+        // Apply exponential moving average
+        displayedSimilarityScore = (DISPLAY_SMOOTHING_FACTOR * similarity.overall) + 
+                                  ((1 - DISPLAY_SMOOTHING_FACTOR) * displayedSimilarityScore);
+    }
     
-    // Update match color based on score - even more lenient thresholds
-    if (similarity.overall >= 50) { // Reduced from 60
+    // Round to nearest integer for display
+    const displayScore = Math.round(displayedSimilarityScore);
+    
+    // Update overall score
+    matchScore.textContent = `${displayScore}%`;
+    
+    // Update match color based on score with adjusted thresholds
+    if (displayScore >= 85) {
         matchScore.style.color = '#27ae60'; // Good match (green)
-    } else if (similarity.overall >= 30) { // Reduced from 35
+    } else if (displayScore >= 60) {
         matchScore.style.color = '#f39c12'; // Medium match (orange)
     } else {
         matchScore.style.color = '#e74c3c'; // Poor match (red)
     }
     
+    // Sort keypoints by similarity to identify the most problematic areas
+    const sortedKeypoints = [...similarity.keypoints].sort((a, b) => a.similarity - b.similarity);
+    
+    // Get the lowest similarity keypoints (limit to 2 for advice)
+    const lowSimilarityKeypoints = sortedKeypoints.filter(kp => kp.similarity < 70).slice(0, 2);
+    
+    // Generate current advice candidates
+    const currentAdviceCandidates = [];
+    
+    // Check if we're missing keypoints that are present in the reference pose
+    const missingImportantKeypoints = checkForMissingImportantKeypoints(selectedPose.pose, currentPose);
+    
+    // Add overall feedback with more accurate and helpful messages
+    let overallFeedback;
+    if (missingImportantKeypoints) {
+        // Prioritize feedback about missing keypoints
+        overallFeedback = 'Move to ensure all body parts are visible.';
+        currentAdviceCandidates.push({
+            text: overallFeedback,
+            class: 'poor',
+            priority: 0, // Highest priority - missing keypoints is critical
+            id: 'missing_keypoints'
+        });
+    } else {
+        // Normal feedback about pose similarity
+        if (displayScore >= 85) {
+            overallFeedback = 'Excellent! Your pose matches well.';
+        } else if (displayScore >= 60) {
+            overallFeedback = 'Good effort! Getting closer.';
+        } else if (displayScore >= 40) {
+            overallFeedback = 'Keep adjusting your pose.';
+        } else {
+            overallFeedback = 'Try to match the basic structure.';
+        }
+        
+        // Add overall feedback as first advice
+        currentAdviceCandidates.push({
+            text: overallFeedback,
+            class: displayScore >= 85 ? 'good' : displayScore >= 60 ? 'medium' : 'poor',
+            priority: 1, // High priority but not as high as missing keypoints
+            id: 'overall'
+        });
+    }
+    
+    // Add specific keypoint feedback
+    if (lowSimilarityKeypoints.length > 0) {
+        lowSimilarityKeypoints.forEach((kp, index) => {
+            // Format the keypoint name for better readability
+            const readableName = kp.name.replace(/_/g, ' ');
+            
+            // Generate specific advice based on the keypoint (keep it concise)
+            let advice = `Adjust your ${readableName}`;
+            
+            // Add more specific but concise advice for certain body parts
+            if (kp.name.includes('elbow') || kp.name.includes('knee')) {
+                advice += ' - check joint angle';
+            } else if (kp.name.includes('wrist') || kp.name.includes('ankle')) {
+                advice += ' - match extension';
+            } else if (kp.name.includes('shoulder') || kp.name.includes('hip')) {
+                advice += ' - align better';
+            }
+            
+            currentAdviceCandidates.push({
+                text: advice,
+                class: kp.similarity < 30 ? 'poor' : 'medium',
+                priority: 2 + index, // Lower priority than overall feedback
+                id: kp.name,
+                similarity: kp.similarity
+            });
+        });
+    } else if (displayScore < 75 && !missingImportantKeypoints) {
+        // If no specific low similarity keypoints but overall score is not great,
+        // provide general advice
+        currentAdviceCandidates.push({
+            text: 'Try to match the overall body position.',
+            class: 'medium',
+            priority: 2,
+            id: 'general'
+        });
+    }
+    
+    // Determine if we should update the advice
+    let adviceToShow = [];
+    
+    if (previousAdvice.length === 0 || adviceStabilityCounter >= ADVICE_STABILITY_THRESHOLD) {
+        // First time or time to refresh advice
+        adviceToShow = currentAdviceCandidates
+            .sort((a, b) => a.priority - b.priority) // Sort by priority
+            .slice(0, 2); // Take only top 2
+        
+        // Reset stability counter
+        adviceStabilityCounter = 0;
+        
+        // Update previous advice
+        previousAdvice = [...adviceToShow];
+    } else {
+        // Use previous advice to maintain stability
+        adviceToShow = previousAdvice;
+        
+        // Increment stability counter
+        adviceStabilityCounter++;
+    }
+    
     // Clear previous details
     matchDetails.innerHTML = '';
     
-    // Add overall feedback - even more encouraging messages
-    let overallFeedback;
-    if (similarity.overall >= 50) { // Reduced from 60
-        overallFeedback = 'Great job! Your pose matches the reference well!';
-    } else if (similarity.overall >= 30) { // Reduced from 35
-        overallFeedback = 'Good effort! You\'re getting closer to the reference pose.';
-    } else {
-        overallFeedback = 'You\'re on the right track! Keep adjusting your pose.';
+    // Create a container for advice with fixed height
+    const adviceContainer = document.createElement('div');
+    adviceContainer.classList.add('advice-container');
+    matchDetails.appendChild(adviceContainer);
+    
+    // Display the advice
+    adviceToShow.forEach(advice => {
+        const adviceElement = document.createElement('div');
+        adviceElement.classList.add('match-detail', advice.class);
+        adviceElement.textContent = advice.text;
+        adviceContainer.appendChild(adviceElement);
+    });
+}
+
+// Function to check if important keypoints from reference pose are missing in current pose
+function checkForMissingImportantKeypoints(referencePose, currentPose) {
+    if (!referencePose || !currentPose || !referencePose.keypoints || !currentPose.keypoints) {
+        return true; // If either pose is missing, consider it as missing keypoints
     }
     
-    const overallElement = document.createElement('div');
-    overallElement.classList.add('match-detail');
-    overallElement.classList.add(similarity.overall >= 50 ? 'good' : similarity.overall >= 30 ? 'medium' : 'poor');
-    overallElement.textContent = overallFeedback;
-    matchDetails.appendChild(overallElement);
+    // Define important keypoints to compare
+    const keyPointsToCompare = [
+        'nose', 'left_shoulder', 'right_shoulder', 'left_elbow', 'right_elbow',
+        'left_wrist', 'right_wrist', 'left_hip', 'right_hip', 'left_knee',
+        'right_knee', 'left_ankle', 'right_ankle'
+    ];
     
-    // Add specific feedback for keypoints with low similarity
-    // Even more lenient threshold for what's considered a "low similarity" keypoint
-    const lowSimilarityKeypoints = similarity.keypoints
-        .filter(kp => kp.similarity < 40) // Reduced from 50
-        .sort((a, b) => a.similarity - b.similarity)
-        .slice(0, 2);
+    // Create maps for both poses' keypoints
+    const referenceKeypointsMap = {};
+    const currentKeypointsMap = {};
     
-    if (lowSimilarityKeypoints.length > 0) {
-        // Create a single element for all keypoint feedback
-        const keypointFeedback = document.createElement('div');
-        keypointFeedback.classList.add('match-detail');
-        keypointFeedback.classList.add('medium'); // Changed from 'poor' to 'medium' for less negative feedback
-        
-        // Format the keypoint names for better readability
-        const keypointNames = lowSimilarityKeypoints.map(kp => {
-            return kp.name.replace('_', ' ');
-        }).join(', ');
-        
-        keypointFeedback.textContent = `Consider adjusting your ${keypointNames} position`;
-        matchDetails.appendChild(keypointFeedback);
+    // Minimum confidence threshold for a keypoint to be considered "present"
+    const confidenceThreshold = 0.2;
+    
+    // Populate reference keypoints map with high-confidence keypoints
+    referencePose.keypoints.forEach(kp => {
+        if (keyPointsToCompare.includes(kp.name) && kp.score > confidenceThreshold) {
+            referenceKeypointsMap[kp.name] = true;
+        }
+    });
+    
+    // Populate current keypoints map with high-confidence keypoints
+    currentPose.keypoints.forEach(kp => {
+        if (keyPointsToCompare.includes(kp.name) && kp.score > confidenceThreshold) {
+            currentKeypointsMap[kp.name] = true;
+        }
+    });
+    
+    // Check if any keypoint that is present in reference pose is missing in current pose
+    for (const keypoint of keyPointsToCompare) {
+        if (referenceKeypointsMap[keypoint] && !currentKeypointsMap[keypoint]) {
+            return true; // Found a keypoint that's in reference but missing in current
+        }
     }
+    
+    return false; // All important keypoints from reference are present in current
 }
 
 // Start recording the comparison video
