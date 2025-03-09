@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GymPose - Pose Detection</title>
+    <link rel="stylesheet" href="style.css">
+    <!-- Favicon -->
+    <link rel="icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAB1UlEQVR4Ae2WA6wcQRSGb23btm3btm3btm3btm3btrXvZpO+k53Z7t7m5uYlX/Zk5v/PnDlnZkRExP/8T5CVlZWnpKTkQnFx8RvwHfwBf8EP8BbcA2vBQJFYyMnJGQHOgL/AiOAXOANGicRAWlraYvALGDH8BItEQiMjI2MV+AOMBPgNVouERGZm5jrwFxgJ8g+sF/GN7OzsA8BIkoPCPpGdnX0IGBJ8AkfAHFAHlAHFQRFQCJQHzcBScBb8AEaCI8I+kZOTcxgYP3gLdoJGIAOIiIiIiIyMjIqKioqOjo6JiYmNi4uLj4+PT0hISExKSkpOSUlJTUtLS8/IyMjMysrKzsnJyc3Ly8svKCgoLCoqKi4pKSktKysrr6ioqKyqqqquqampraura2hoaGhsamr6/8EHhX0iNzf3CDBO8BbMAplARERERGRkZFR0dHRMbGxsXHx8fEJiYmJScnJySkpKampGRkZmVlZWdk5OTm5eXl5+QUFBYVFRUXFJSUlpWVlZeUVFRWVVVVV1TU1NbV1dXUNDQ0NjU1NTc0tLS2tbW1t7R0dHZ1dXV3dPT09vX19f/8DAwODQ0NDwyMjI6Ojo2Pj4+MTk5OTU9PT0zOzs7Nz8/PzCkpKS0vLy8orq6uraBgaGxqampuaWlpbWtra29o6Ojs6urq7unp6e3r6+vv6BgYHBoaGh4ZGRkdHx8fGJycnJqenp6ZnZ2dm5+fn5hSUlJaXl5eUV1dXVtXV1dQ2NjY1NzS0trW3t7e0dnZ2dXd3d3T29vb39AwMDg0NDQ8MjIyOj4+PjE5OTk1PT09Mzs7Ozc/Pz8wtLSkpKy8vLK6qrq2vr6uoaGhsbm5pbWlrb2tvbOzo7O7u6u7t7ent7+/r7+wcGBweHhoeHR0ZHR8fGJyYmp6anp2dmZ2fn5hcUFBaVlJSWlVdUVFbV1NTW1jc0NjY1t7S2trV3dHZ2dff09vb1DwwODg2PjI6Ojk9MTk5Nz8zOzs7NLygsLCouLS0rr6isrKquqa2ta2hsbGpuaW1ta+/o7Ozq7unt7esfGBwcGh4ZHR0dn5icnJqemZ2dnZtfUFhYVFxaWlZeUVlZVV1TW1tX39DY2NTc0tra1t7R2dnV3dPb29c/MDg4NDwyOjo6PjE5OTU9Mzs7Oze/oLCwqLi0tKy8orKyqrqmtra" type="image/png">
+    <!-- TensorFlow.js Core -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter"></script>
+    
+    <!-- You must explicitly require a TF.js backend -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl"></script>
+    
+    <!-- Pose Detection library -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection"></script>
+</head>
+<body>
+    <div class="container">
+        <h1>GymPose - Pose Detection</h1>
+        
+        <div class="app-mode-selector">
+            <button id="cameraModeBtn" class="mode-btn active">Camera Mode</button>
+            <button id="analysisModeBtn" class="mode-btn">Analysis Mode</button>
+            <button id="frameModeBtn" class="mode-btn">Frame Selection Mode</button>
+            <button id="selectedPoseModeBtn" class="mode-btn">Selected Pose</button>
+            <button id="poseComparisonModeBtn" class="mode-btn">Pose Comparison</button>
+        </div>
+        
+        <!-- Camera Mode - For recording video -->
+        <div id="cameraMode" class="app-mode">
+            <div class="video-container">
+                <div class="video-wrapper">
+                    <h2>Your Video</h2>
+                    <video id="video" playsinline></video>
+                    <canvas id="output"></canvas>
+                    <div class="controls">
+                        <button id="startBtn" class="btn">Start Camera</button>
+                        <button id="recordBtn" class="btn" disabled>Start Recording</button>
+                        <button id="stopBtn" class="btn" disabled>Stop Recording</button>
+                        <button id="analyzeBtn" class="btn" disabled>Analyze Pose</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Analysis Mode - For viewing the analyzed video -->
+        <div id="analysisMode" class="app-mode" style="display: none;">
+            <div class="video-container">
+                <div class="recorded-wrapper">
+                    <h2>Recorded Video with Pose Analysis</h2>
+                    <video id="recorded" playsinline controls></video>
+                    <canvas id="recordedOutput"></canvas>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Frame Selection Mode - For selecting specific frames -->
+        <div id="frameMode" class="app-mode" style="display: none;">
+            <div class="frame-viewer">
+                <h2>Frame Selection</h2>
+                <div class="frame-slider">
+                    <input type="range" id="frameSlider" min="0" max="0" value="0" step="1" class="slider">
+                    <div class="slider-labels">
+                        <span>0</span>
+                        <span id="maxFrameLabel">0</span>
+                    </div>
+                </div>
+                <div class="frame-info">
+                    <span>Time: <span id="currentTimeDisplay">0.0</span>s</span>
+                </div>
+                <div class="frame-controls">
+                    <button id="showFrameBtn" class="btn">Show Frame</button>
+                    <button id="selectPoseBtn" class="btn">Select Pose</button>
+                </div>
+                <div class="frame-display">
+                    <canvas id="frameCanvas"></canvas>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Selected Pose Mode - For displaying selected pose details -->
+        <div id="selectedPoseMode" class="app-mode" style="display: none;">
+            <div class="selected-pose-viewer">
+                <h2>Selected Pose Details</h2>
+                <div class="selected-frame-display">
+                    <canvas id="selectedPoseCanvas"></canvas>
+                </div>
+                <div class="selected-pose-info">
+                    <h3>Pose Information</h3>
+                    <div id="selectedPoseInfo"></div>
+                </div>
+                <div class="pose-controls">
+                    <button id="clearPoseBtn" class="btn">Clear Selected Pose</button>
+                    <button id="startComparisonBtn" class="btn">Start Comparison</button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Pose Comparison Mode - For comparing current pose with selected pose -->
+        <div id="poseComparisonMode" class="app-mode" style="display: none;">
+            <div class="comparison-viewer">
+                <h2>Pose Comparison</h2>
+                <p class="comparison-instructions">Try to match your pose structure with the reference pose.</p>
+                
+                <div class="comparison-container">
+                    <div class="reference-pose">
+                        <h3>Reference Pose</h3>
+                        <div class="pose-display">
+                            <canvas id="referencePoseCanvas"></canvas>
+                        </div>
+                    </div>
+                    
+                    <div class="current-pose">
+                        <h3>Your Current Pose</h3>
+                        <div class="pose-display">
+                            <video id="comparisonVideo" autoplay playsinline></video>
+                            <canvas id="comparisonCanvas"></canvas>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="comparison-info">
+                    <h3>Pose Match Score: <span id="matchScore">0%</span></h3>
+                    <div id="matchDetails"></div>
+                    
+                    <div class="color-legend">
+                        <h4>Color Legend:</h4>
+                        <div class="legend-item">
+                            <span class="color-sample" style="background-color: #87CEFA;"></span>
+                            <span class="legend-text">Reference Pose</span>
+                        </div>
+                        <div class="legend-item">
+                            <span class="color-sample" style="background-color: #ff0000;"></span>
+                            <span class="legend-text">Poor Structure Match</span>
+                        </div>
+                        <div class="legend-item">
+                            <span class="color-sample" style="background-color: #ffff00;"></span>
+                            <span class="legend-text">Medium Structure Match</span>
+                        </div>
+                        <div class="legend-item">
+                            <span class="color-sample" style="background-color: #00ff00;"></span>
+                            <span class="legend-text">Good Structure Match</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="comparison-controls">
+                    <button id="startCameraBtn" class="btn">Start Camera</button>
+                    <button id="recordComparisonBtn" class="btn">Record Video</button>
+                    <button id="stopComparisonRecordingBtn" class="btn" disabled>Stop Recording</button>
+                    <button id="downloadComparisonBtn" class="btn" disabled>Download Video</button>
+                    <button id="stopComparisonBtn" class="btn">Exit Comparison</button>
+                </div>
+            </div>
+        </div>
+        
+        <div class="info-panel">
+            <h2>Pose Information</h2>
+            <div id="poseInfo"></div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html> 

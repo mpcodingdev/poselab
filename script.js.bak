@@ -1,0 +1,816 @@
+// DOM Elements
+const videoElement = document.getElementById('video');
+const outputCanvas = document.getElementById('output');
+const recordedVideo = document.getElementById('recorded');
+const recordedOutputCanvas = document.getElementById('recordedOutput');
+const startBtn = document.getElementById('startBtn');
+const recordBtn = document.getElementById('recordBtn');
+const stopBtn = document.getElementById('stopBtn');
+const analyzeBtn = document.getElementById('analyzeBtn');
+const poseInfoDiv = document.getElementById('poseInfo');
+const recordedWrapper = document.querySelector('.recorded-wrapper');
+
+// Mode selector elements
+const cameraModeBtn = document.getElementById('cameraModeBtn');
+const frameModeBtn = document.getElementById('frameModeBtn');
+const cameraModeDiv = document.getElementById('cameraMode');
+const frameModeDiv = document.getElementById('frameMode');
+
+// Canvas contexts
+const ctx = outputCanvas.getContext('2d');
+const recordedCtx = recordedOutputCanvas.getContext('2d');
+
+// Global variables
+let stream;
+let detector;
+let mediaRecorder;
+let recordedBlob;
+let isRecording = false;
+let isAnalyzing = false;
+let animationId;
+let currentMode = 'camera'; // 'camera' or 'frame'
+
+// COCO keypoint connections for skeleton drawing (used by MoveNet)
+const KEYPOINT_CONNECTIONS = [
+    ['nose', 'left_eye'], ['nose', 'right_eye'],
+    ['left_eye', 'left_ear'], ['right_eye', 'right_ear'],
+    ['left_shoulder', 'right_shoulder'],
+    ['left_shoulder', 'left_elbow'], ['right_shoulder', 'right_elbow'],
+    ['left_elbow', 'left_wrist'], ['right_elbow', 'right_wrist'],
+    ['left_shoulder', 'left_hip'], ['right_shoulder', 'right_hip'],
+    ['left_hip', 'right_hip'],
+    ['left_hip', 'left_knee'], ['right_hip', 'right_knee'],
+    ['left_knee', 'left_ankle'], ['right_knee', 'right_ankle']
+];
+
+// Wait for TensorFlow.js to be fully loaded
+document.addEventListener('DOMContentLoaded', async function() {
+    console.log('DOM fully loaded');
+    
+    // Check if TensorFlow.js is loaded
+    if (typeof tf === 'undefined') {
+        console.error('TensorFlow.js is not loaded. Please check your internet connection and try again.');
+        alert('Error: TensorFlow.js could not be loaded. Please check your internet connection and try again.');
+        return;
+    }
+    
+    console.log('TensorFlow.js version:', tf.version);
+    
+    // Check if pose-detection is loaded
+    if (typeof poseDetection === 'undefined') {
+        console.error('Pose Detection library is not loaded. Please check your internet connection and try again.');
+        alert('Error: Pose Detection library could not be loaded. Please check your internet connection and try again.');
+        return;
+    }
+    
+    console.log('Pose Detection library is loaded');
+    
+    // Set canvas size to avoid scaling issues
+    outputCanvas.width = 640;
+    outputCanvas.height = 480;
+    recordedOutputCanvas.width = 640;
+    recordedOutputCanvas.height = 480;
+    
+    // Initialize pose detector
+    await initPoseDetector();
+    
+    // Add event listeners for mode switching
+    cameraModeBtn.addEventListener('click', () => switchMode('camera'));
+    frameModeBtn.addEventListener('click', () => switchMode('frame'));
+});
+
+// Initialize mode switching
+function initModeSwitching() {
+    cameraModeBtn.addEventListener('click', () => switchMode('camera'));
+    frameModeBtn.addEventListener('click', () => switchMode('frame'));
+    
+    // Initial mode is camera
+    switchMode('camera');
+}
+
+// Switch between camera and frame selection modes
+function switchMode(mode) {
+    if (mode === currentMode) return;
+    
+    console.log(`Switching to ${mode} mode`);
+    currentMode = mode;
+    
+    // Update button states
+    cameraModeBtn.classList.toggle('active', mode === 'camera');
+    frameModeBtn.classList.toggle('active', mode === 'frame');
+    
+    // Show/hide appropriate sections
+    cameraModeDiv.style.display = mode === 'camera' ? 'block' : 'none';
+    frameModeDiv.style.display = mode === 'frame' ? 'block' : 'none';
+    
+    // Handle mode-specific actions
+    if (mode === 'camera') {
+        // If we're switching to camera mode, stop any ongoing analysis
+        if (isAnalyzing) {
+            stopAnalysis();
+        }
+    } else {
+        // If we're switching to frame mode, stop the camera stream if it's active
+        if (stream) {
+            const tracks = stream.getTracks();
+            tracks.forEach(track => track.stop());
+            console.log('Camera stream stopped');
+        }
+        
+        // If we have a recorded video, prepare it for analysis
+        if (recordedBlob) {
+            prepareFrameAnalysis();
+        } else {
+            alert('Please record a video first before switching to Analysis Mode.');
+            switchMode('camera');
+        }
+    }
+}
+
+// Stop ongoing analysis
+function stopAnalysis() {
+    if (isAnalyzing) {
+        isAnalyzing = false;
+        
+        if (recordedVideo && !recordedVideo.paused) {
+            recordedVideo.pause();
+        }
+        
+        if (animationId) {
+            cancelAnimationFrame(animationId);
+            animationId = null;
+        }
+        
+        console.log('Analysis stopped');
+    }
+}
+
+// Prepare frame analysis when switching to frame mode
+function prepareFrameAnalysis() {
+    if (!recordedBlob || !detector) {
+        console.error('No recorded video or detector not initialized');
+        return;
+    }
+    
+    console.log('Preparing video analysis');
+    
+    // Start video analysis if not already analyzing
+    if (!isAnalyzing) {
+        isAnalyzing = true;
+        startVideoAnalysis();
+    }
+}
+
+// Initialize the pose detector
+async function initPoseDetector() {
+    try {
+        console.log('Initializing pose detector...');
+        
+        // Create detector
+        detector = await poseDetection.createDetector(
+            poseDetection.SupportedModels.MoveNet,
+            {
+                modelType: poseDetection.movenet.modelType.SINGLEPOSE_THUNDER,
+                enableSmoothing: true,
+                minPoseScore: 0.25
+            }
+        );
+        
+        console.log('Pose detector initialized successfully');
+        startBtn.disabled = false;
+        return true;
+    } catch (error) {
+        console.error('Error initializing pose detector:', error);
+        alert('Error initializing pose detector. Please check the console for details.');
+        return false;
+    }
+}
+
+// Start the camera
+async function startCamera() {
+    try {
+        console.log('Requesting camera access...');
+        stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+                width: 640,
+                height: 480,
+                facingMode: 'user'
+            },
+            audio: true
+        });
+        
+        console.log('Camera access granted');
+        videoElement.srcObject = stream;
+        videoElement.width = 640;
+        videoElement.height = 480;
+        
+        // Wait for video to be ready
+        return new Promise((resolve) => {
+            videoElement.onloadedmetadata = async () => {
+                console.log('Video metadata loaded');
+                
+                try {
+                    await videoElement.play();
+                    console.log('Video playing');
+                    
+                    // Initialize pose detector
+                    const detectorInitialized = await initPoseDetector();
+                    
+                    if (detectorInitialized) {
+                        // Enable record button
+                        recordBtn.disabled = false;
+                        startBtn.disabled = true;
+                        
+                        // Start pose detection on live video
+                        detectPoseInRealTime();
+                        resolve(true);
+                    } else {
+                        // Re-enable start button if detector initialization failed
+                        startBtn.disabled = false;
+                        resolve(false);
+                    }
+                } catch (error) {
+                    console.error('Error playing video:', error);
+                    startBtn.disabled = false;
+                    resolve(false);
+                }
+            };
+            
+            videoElement.onerror = () => {
+                console.error('Video element error');
+                startBtn.disabled = false;
+                resolve(false);
+            };
+        });
+        
+    } catch (error) {
+        console.error('Error accessing camera:', error);
+        alert('Error accessing camera: ' + error.message + '\nPlease make sure you have a camera connected and have granted permission.');
+        startBtn.disabled = false;
+        return false;
+    }
+}
+
+// Detect pose in real-time
+async function detectPoseInRealTime() {
+    if (!detector) {
+        console.error('Pose detector not initialized');
+        return;
+    }
+    
+    if (videoElement.paused || videoElement.ended) {
+        console.log('Video is paused or ended, stopping pose detection');
+        return;
+    }
+    
+    try {
+        // Make sure the video is ready
+        if (videoElement.readyState < 2) {
+            console.log('Video not ready yet, waiting...');
+            animationId = requestAnimationFrame(detectPoseInRealTime);
+            return;
+        }
+        
+        // Update canvas dimensions to match the video's actual display size
+        const videoWidth = videoElement.videoWidth;
+        const videoHeight = videoElement.videoHeight;
+        const displayWidth = videoElement.clientWidth;
+        const displayHeight = videoElement.clientHeight;
+        
+        // Set canvas dimensions to match the video display size
+        outputCanvas.width = displayWidth;
+        outputCanvas.height = displayHeight;
+        
+        // Detect poses
+        console.log('Estimating poses on video frame');
+        const poses = await detector.estimatePoses(videoElement, {
+            flipHorizontal: false
+        });
+        
+        console.log('Poses detected:', poses.length > 0 ? 'Yes' : 'No');
+        
+        // Clear canvas
+        ctx.clearRect(0, 0, outputCanvas.width, outputCanvas.height);
+        
+        // Draw results
+        if (poses.length > 0) {
+            console.log('Drawing pose with keypoints:', poses[0].keypoints.length);
+            
+            // Scale keypoints to match the display size
+            const scaledPose = {
+                ...poses[0],
+                keypoints: poses[0].keypoints.map(keypoint => ({
+                    ...keypoint,
+                    x: (keypoint.x / videoWidth) * displayWidth,
+                    y: (keypoint.y / videoHeight) * displayHeight
+                }))
+            };
+            
+            drawPose(scaledPose, ctx);
+            updatePoseInfo(scaledPose);
+        }
+        
+        // Continue detection
+        animationId = requestAnimationFrame(detectPoseInRealTime);
+    } catch (error) {
+        console.error('Error in pose detection:', error);
+        // Try to continue despite errors
+        animationId = requestAnimationFrame(detectPoseInRealTime);
+    }
+}
+
+// Draw pose keypoints and skeleton
+function drawPose(pose, context) {
+    if (!pose || !pose.keypoints || pose.keypoints.length === 0) {
+        console.error('Invalid pose data for drawing');
+        return;
+    }
+    
+    console.log('Drawing pose with score:', pose.score);
+    
+    // Draw keypoints
+    for (const keypoint of pose.keypoints) {
+        if (keypoint.score > 0.3) {
+            context.beginPath();
+            context.arc(keypoint.x, keypoint.y, 5, 0, 2 * Math.PI);
+            context.fillStyle = 'aqua';
+            context.fill();
+            
+            // Draw keypoint name
+            context.fillStyle = 'white';
+            context.font = '12px Arial';
+            context.fillText(keypoint.name, keypoint.x + 10, keypoint.y);
+        }
+    }
+    
+    // Draw skeleton lines
+    context.strokeStyle = 'lime';
+    context.lineWidth = 2;
+    
+    for (const [firstPointName, secondPointName] of KEYPOINT_CONNECTIONS) {
+        const firstPoint = pose.keypoints.find(kp => kp.name === firstPointName);
+        const secondPoint = pose.keypoints.find(kp => kp.name === secondPointName);
+        
+        if (firstPoint && secondPoint && 
+            firstPoint.score > 0.3 && secondPoint.score > 0.3) {
+            context.beginPath();
+            context.moveTo(firstPoint.x, firstPoint.y);
+            context.lineTo(secondPoint.x, secondPoint.y);
+            context.stroke();
+        }
+    }
+}
+
+// Update pose information display
+function updatePoseInfo(pose) {
+    if (!pose || !pose.keypoints) return;
+    
+    // Clear previous info
+    poseInfoDiv.innerHTML = '';
+    
+    // Display confidence score
+    const scoreElement = document.createElement('div');
+    scoreElement.classList.add('keypoint');
+    scoreElement.textContent = `Overall confidence: ${(pose.score * 100).toFixed(1)}%`;
+    poseInfoDiv.appendChild(scoreElement);
+    
+    // Display keypoint positions with confidence > 50%
+    for (const keypoint of pose.keypoints) {
+        if (keypoint.score > 0.5) {
+            const keypointElement = document.createElement('div');
+            keypointElement.classList.add('keypoint');
+            keypointElement.textContent = `${keypoint.name}: (${Math.round(keypoint.x)}, ${Math.round(keypoint.y)}) - ${(keypoint.score * 100).toFixed(1)}%`;
+            poseInfoDiv.appendChild(keypointElement);
+        }
+    }
+}
+
+// Start recording
+function startRecording() {
+    if (!stream) {
+        console.error('No media stream available');
+        return;
+    }
+    
+    // Create media recorder
+    const options = { mimeType: 'video/webm;codecs=vp9,opus' };
+    try {
+        mediaRecorder = new MediaRecorder(stream, options);
+    } catch (e) {
+        console.error('MediaRecorder error with vp9:', e);
+        try {
+            // Try with a more compatible format
+            mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+        } catch (e2) {
+            console.error('MediaRecorder error with webm:', e2);
+            // Last resort - no specific mime type
+            mediaRecorder = new MediaRecorder(stream);
+        }
+    }
+    
+    const chunks = [];
+    
+    mediaRecorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) {
+            chunks.push(e.data);
+        }
+    };
+    
+    mediaRecorder.onstop = () => {
+        console.log('Recording stopped, processing video...');
+        recordedBlob = new Blob(chunks, { type: 'video/webm' });
+        const videoURL = URL.createObjectURL(recordedBlob);
+        recordedVideo.src = videoURL;
+        recordedVideo.width = 640;
+        recordedVideo.height = 480;
+        
+        // Reset captured frames
+        capturedFrames = [];
+        framesContainer.innerHTML = '';
+        
+        // Enable frame mode button
+        frameModeBtn.disabled = false;
+        
+        // Enable analyze button
+        analyzeBtn.disabled = false;
+        
+        console.log('Recorded video ready for analysis');
+    };
+    
+    // Start recording
+    mediaRecorder.start(100); // Collect data every 100ms
+    isRecording = true;
+    console.log('Recording started');
+    
+    // Update UI
+    recordBtn.disabled = true;
+    stopBtn.disabled = false;
+}
+
+// Stop recording
+function stopRecording() {
+    if (!mediaRecorder || !isRecording) {
+        console.error('No active recording to stop');
+        return;
+    }
+    
+    mediaRecorder.stop();
+    isRecording = false;
+    console.log('Recording stopped');
+    
+    // Update UI
+    stopBtn.disabled = true;
+    recordBtn.disabled = false;
+}
+
+// Analyze recorded video
+async function analyzeRecordedVideo() {
+    if (!recordedBlob || !detector) {
+        console.error('No recorded video or detector not initialized');
+        return;
+    }
+    
+    // Stop recording if it's active
+    if (isRecording) {
+        stopRecording();
+    }
+    
+    // Stop real-time pose detection
+    if (isAnalyzing) {
+        isAnalyzing = false;
+        if (animationId) {
+            cancelAnimationFrame(animationId);
+            animationId = null;
+        }
+    }
+    
+    // Switch to frame mode - this will call prepareFrameAnalysis() which starts the video analysis
+    switchMode('frame');
+}
+
+// Start the video analysis process
+async function startVideoAnalysis() {
+    try {
+        // Play the recorded video
+        await recordedVideo.play();
+        console.log('Recorded video is playing for analysis');
+        
+        // Analyze each frame
+        analyzeFrame();
+    } catch (error) {
+        console.error('Error playing recorded video:', error);
+        isAnalyzing = false;
+        analyzeBtn.disabled = false;
+    }
+}
+
+// Analyze a single frame of the recorded video
+async function analyzeFrame() {
+    if (recordedVideo.paused || recordedVideo.ended) {
+        isAnalyzing = false;
+        analyzeBtn.disabled = false;
+        console.log('Video analysis complete');
+        return;
+    }
+    
+    try {
+        // Make sure the video is ready
+        if (recordedVideo.readyState < 2) {
+            console.log('Recorded video not ready yet, waiting...');
+            requestAnimationFrame(analyzeFrame);
+            return;
+        }
+        
+        // Update canvas dimensions to match the video's actual display size
+        const videoWidth = recordedVideo.videoWidth;
+        const videoHeight = recordedVideo.videoHeight;
+        const displayWidth = recordedVideo.clientWidth;
+        const displayHeight = recordedVideo.clientHeight;
+        
+        // Set canvas dimensions to match the video display size
+        recordedOutputCanvas.width = displayWidth;
+        recordedOutputCanvas.height = displayHeight;
+        
+        // Detect poses on current frame
+        console.log('Estimating poses on recorded video frame');
+        const poses = await detector.estimatePoses(recordedVideo, {
+            flipHorizontal: false
+        });
+        
+        console.log('Poses detected in recorded video:', poses.length > 0 ? 'Yes' : 'No');
+        
+        // Clear canvas
+        recordedCtx.clearRect(0, 0, recordedOutputCanvas.width, recordedOutputCanvas.height);
+        
+        // Draw results
+        if (poses.length > 0) {
+            console.log('Drawing pose on recorded video with keypoints:', poses[0].keypoints.length);
+            
+            // Scale keypoints to match the display size
+            const scaledPose = {
+                ...poses[0],
+                keypoints: poses[0].keypoints.map(keypoint => ({
+                    ...keypoint,
+                    x: (keypoint.x / videoWidth) * displayWidth,
+                    y: (keypoint.y / videoHeight) * displayHeight
+                }))
+            };
+            
+            drawPose(scaledPose, recordedCtx);
+            updatePoseInfo(scaledPose);
+        }
+        
+        // Continue analysis
+        requestAnimationFrame(analyzeFrame);
+    } catch (error) {
+        console.error('Error analyzing frame:', error);
+        // Try to continue despite errors
+        requestAnimationFrame(analyzeFrame);
+    }
+}
+
+// Update frame information display
+function updateFrameInfo() {
+    const currentTime = recordedVideo.currentTime;
+    const minutes = Math.floor(currentTime / 60);
+    const seconds = Math.floor(currentTime % 60).toString().padStart(2, '0');
+    const milliseconds = Math.floor((currentTime % 1) * 100).toString().padStart(2, '0');
+    
+    currentTimeElement.textContent = `${minutes}:${seconds}.${milliseconds}`;
+    
+    // Calculate current frame number based on estimated frame rate
+    currentFrameNumber = Math.floor(currentTime * frameRate);
+    frameNumberElement.textContent = currentFrameNumber;
+}
+
+// Estimate the frame rate of the video
+function estimateFrameRate() {
+    // Default to 30fps if we can't determine it
+    frameRate = 30;
+    
+    // Try to get frame rate from video if possible
+    if (recordedVideo.mozFrameRate) {
+        frameRate = recordedVideo.mozFrameRate;
+    } else if (recordedVideo.webkitFrameRate) {
+        frameRate = recordedVideo.webkitFrameRate;
+    }
+    
+    console.log('Estimated frame rate:', frameRate, 'fps');
+}
+
+// Pause/resume video
+function togglePause() {
+    console.log('Toggle pause called, current state:', recordedVideo.paused ? 'paused' : 'playing');
+    
+    if (recordedVideo.paused) {
+        recordedVideo.play()
+            .then(() => {
+                console.log('Video playback resumed');
+                pauseBtn.textContent = 'Pause';
+                isPaused = false;
+                
+                // Resume analysis if it was paused
+                if (isAnalyzing) {
+                    analyzeFrame();
+                }
+            })
+            .catch(error => {
+                console.error('Error resuming video:', error);
+            });
+    } else {
+        recordedVideo.pause();
+        console.log('Video playback paused');
+        pauseBtn.textContent = 'Resume';
+        isPaused = true;
+        
+        // Analyze the current frame when paused
+        if (isAnalyzing) {
+            analyzeCurrentFrame();
+        }
+    }
+}
+
+// Move to previous frame
+function goToPreviousFrame() {
+    console.log('Going to previous frame');
+    
+    if (!isPaused) {
+        recordedVideo.pause();
+        pauseBtn.textContent = 'Resume';
+        isPaused = true;
+    }
+    
+    // Move back 1/frameRate seconds (one frame)
+    const frameTime = 1 / frameRate;
+    recordedVideo.currentTime = Math.max(0, recordedVideo.currentTime - frameTime);
+    
+    // Update frame info and analyze the frame
+    updateFrameInfo();
+    analyzeCurrentFrame();
+}
+
+// Move to next frame
+function goToNextFrame() {
+    console.log('Going to next frame');
+    
+    if (!isPaused) {
+        recordedVideo.pause();
+        pauseBtn.textContent = 'Resume';
+        isPaused = true;
+    }
+    
+    // Move forward 1/frameRate seconds (one frame)
+    const frameTime = 1 / frameRate;
+    recordedVideo.currentTime = Math.min(recordedVideo.duration, recordedVideo.currentTime + frameTime);
+    
+    // Update frame info and analyze the frame
+    updateFrameInfo();
+    analyzeCurrentFrame();
+}
+
+// Analyze the current frame when paused
+async function analyzeCurrentFrame() {
+    console.log('Analyzing current frame at time:', recordedVideo.currentTime);
+    
+    try {
+        // Update canvas dimensions to match the video's actual display size
+        const videoWidth = recordedVideo.videoWidth;
+        const videoHeight = recordedVideo.videoHeight;
+        const displayWidth = recordedVideo.clientWidth;
+        const displayHeight = recordedVideo.clientHeight;
+        
+        // Set canvas dimensions to match the video display size
+        recordedOutputCanvas.width = displayWidth;
+        recordedOutputCanvas.height = displayHeight;
+        
+        // Detect poses on current frame
+        const poses = await detector.estimatePoses(recordedVideo, {
+            flipHorizontal: false
+        });
+        
+        // Clear canvas
+        recordedCtx.clearRect(0, 0, recordedOutputCanvas.width, recordedOutputCanvas.height);
+        
+        // Draw results
+        if (poses.length > 0) {
+            // Scale keypoints to match the display size
+            const scaledPose = {
+                ...poses[0],
+                keypoints: poses[0].keypoints.map(keypoint => ({
+                    ...keypoint,
+                    x: (keypoint.x / videoWidth) * displayWidth,
+                    y: (keypoint.y / videoHeight) * displayHeight
+                }))
+            };
+            
+            drawPose(scaledPose, recordedCtx);
+            updatePoseInfo(scaledPose);
+        }
+    } catch (error) {
+        console.error('Error analyzing current frame:', error);
+    }
+}
+
+// Capture the current frame
+async function captureCurrentFrame() {
+    console.log('Capturing current frame');
+    
+    if (!isPaused) {
+        recordedVideo.pause();
+        pauseBtn.textContent = 'Resume';
+        isPaused = true;
+        
+        // Make sure we analyze the current frame
+        await analyzeCurrentFrame();
+    }
+    
+    // Get the video dimensions
+    const displayWidth = recordedVideo.clientWidth;
+    const displayHeight = recordedVideo.clientHeight;
+    
+    // Create a temporary canvas to capture the frame with pose overlay
+    const captureCanvas = document.createElement('canvas');
+    captureCanvas.width = displayWidth;
+    captureCanvas.height = displayHeight;
+    const captureCtx = captureCanvas.getContext('2d');
+    
+    // Draw the video frame (scaled to match display size)
+    captureCtx.drawImage(recordedVideo, 0, 0, displayWidth, displayHeight);
+    
+    // Draw the pose overlay
+    captureCtx.drawImage(recordedOutputCanvas, 0, 0);
+    
+    // Convert to image data URL
+    const imageDataUrl = captureCanvas.toDataURL('image/png');
+    
+    // Add to captured frames
+    const frameData = {
+        time: recordedVideo.currentTime,
+        frameNumber: currentFrameNumber,
+        image: imageDataUrl
+    };
+    
+    capturedFrames.push(frameData);
+    addFrameThumbnail(frameData);
+    
+    console.log('Frame captured at time:', recordedVideo.currentTime);
+}
+
+// Add a frame thumbnail to the UI
+function addFrameThumbnail(frameData) {
+    const thumbnail = document.createElement('div');
+    thumbnail.className = 'frame-thumbnail';
+    thumbnail.dataset.frameNumber = frameData.frameNumber;
+    
+    const img = document.createElement('img');
+    img.src = frameData.image;
+    img.alt = `Frame ${frameData.frameNumber}`;
+    
+    const timeLabel = document.createElement('div');
+    timeLabel.className = 'frame-time';
+    
+    const minutes = Math.floor(frameData.time / 60);
+    const seconds = Math.floor(frameData.time % 60).toString().padStart(2, '0');
+    const milliseconds = Math.floor((frameData.time % 1) * 100).toString().padStart(2, '0');
+    
+    timeLabel.textContent = `${minutes}:${seconds}.${milliseconds}`;
+    
+    thumbnail.appendChild(img);
+    thumbnail.appendChild(timeLabel);
+    
+    // Add click event to jump to this frame
+    thumbnail.addEventListener('click', () => {
+        recordedVideo.currentTime = frameData.time;
+        recordedVideo.pause();
+        pauseBtn.textContent = 'Resume';
+        isPaused = true;
+        
+        // Update frame info and analyze the frame
+        updateFrameInfo();
+        analyzeCurrentFrame();
+        
+        // Highlight the selected thumbnail
+        document.querySelectorAll('.frame-thumbnail').forEach(el => {
+            el.classList.remove('selected');
+        });
+        thumbnail.classList.add('selected');
+    });
+    
+    framesContainer.appendChild(thumbnail);
+}
+
+// Event listeners
+startBtn.addEventListener('click', startCamera);
+recordBtn.addEventListener('click', startRecording);
+stopBtn.addEventListener('click', stopRecording);
+analyzeBtn.addEventListener('click', analyzeRecordedVideo);
+
+// Clean up on page unload
+window.addEventListener('beforeunload', () => {
+    if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+    }
+    if (animationId) {
+        cancelAnimationFrame(animationId);
+    }
+}); 
