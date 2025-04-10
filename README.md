@@ -1,4 +1,5 @@
-﻿# GymPose - Pose Detection Application
+﻿# GymPose - Pose Detection Application  - Click here 👇🏼
+# https://mpcodingdev.github.io/poselab/
 
 A web application that allows users to record videos of themselves and analyze their poses using TensorFlow.js and the PoseNet model.
 
